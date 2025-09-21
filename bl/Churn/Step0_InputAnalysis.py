@@ -32,14 +32,13 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.paths_config import ProjectPaths
-from config.global_config import GlobalConfig
 
 
 class CSVStructureAnalyzer:
     """CSV-Struktur-Analyse mit Hash-basierter Lernfähigkeit"""
     
     def __init__(self):
-        self.cache_dir = os.path.join(ProjectPaths.dynamic_outputs_directory(), "stage0_cache")
+        self.cache_dir = os.path.join(ProjectPaths.dynamic_system_outputs_directory(), "stage0_cache")
         os.makedirs(self.cache_dir, exist_ok=True)
         self.similarity_threshold = 0.8
         
