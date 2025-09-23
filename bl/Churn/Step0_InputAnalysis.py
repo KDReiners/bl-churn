@@ -161,6 +161,12 @@ class CSVStructureAnalyzer:
             
             # Komplette Daten als JSON-Array hinzufügen
             print("💾 Konvertiere alle Daten zu JSON...")
+            
+            # Explizite Integer-Konvertierung für I_Alive (verhindert Boolean-Inferenz)
+            if 'I_Alive' in df.columns:
+                df['I_Alive'] = df['I_Alive'].astype(int)
+                print("🔧 I_Alive explizit als Integer konvertiert")
+            
             data_json = df.to_dict('records')  # Liste von Dictionaries
             
             # Ergebnisse zusammenstellen
