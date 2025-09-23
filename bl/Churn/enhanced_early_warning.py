@@ -380,6 +380,39 @@ class EnhancedEarlyWarningSystem:
         # self.feature_names = final_features
         
         return enhanced_df, final_features
+
+    def _get_positive_class_proba(self, model, X) -> np.ndarray:
+        """
+        Robuste Extraktion der Positivklassen-Wahrscheinlichkeit.
+        Wenn das Modell nur eine Klasse kennt (einspaltiges predict_proba),
+        liefere einen konstanten Vektor (0.0/1.0) statt zu crashen.
+        """
+        try:
+            proba = model.predict_proba(X)
+            if proba is None:
+                return np.zeros((len(X),), dtype=float)
+            if proba.ndim == 1:
+                return proba.astype(float)
+            n_cols = proba.shape[1]
+            if n_cols == 1:
+                try:
+                    cls = int(getattr(model, 'classes_', [0])[0])
+                    val = 1.0 if cls == 1 else 0.0
+                except Exception:
+                    val = float(proba[0, 0]) if proba.size > 0 else 0.0
+                return np.full((proba.shape[0],), val, dtype=float)
+            try:
+                classes = list(getattr(model, 'classes_', []))
+                if 1 in classes:
+                    idx = classes.index(1)
+                    return proba[:, idx].astype(float)
+            except Exception:
+                pass
+            return proba[:, -1].astype(float)
+        except Exception:
+            return np.zeros((len(X),), dtype=float)
+
+    
     
     def _get_dynamic_column_names(self):
         """Liest Primary Key, Timebase und Target Spaltennamen dynamisch aus Data Dictionary"""
@@ -900,21 +933,21 @@ class EnhancedEarlyWarningSystem:
                             )
                             features_df[f'{feature}_category'] = digital_categories.astype(str)
                             
-                            # 4. One-Hot für Kategorien
+                            # 4. One-Hot für Kategorien (explizit als Integer für DuckDB-Kompatibilität)
                             category_dummies = pd.get_dummies(digital_categories, prefix=f'{feature}_cat')
                             for col in category_dummies.columns:
-                                features_df[col] = category_dummies[col]
+                                features_df[col] = category_dummies[col].astype(int)  # Boolean → Integer
                                 feature_list.append(col)
                             
                             print(f"      ✅ Kontinuierlich + 3 Binary + 4 Kategorien = 8 Features")
                             
                         else:
-                            # Standard One-Hot Encoding für andere kategorische Features
+                            # Standard One-Hot Encoding für andere kategorische Features (explizit als Integer)
                             dummies = pd.get_dummies(feature_series, prefix=feature, drop_first=True)
                             
-                            # Füge One-Hot Features hinzu
+                            # Füge One-Hot Features hinzu (Boolean → Integer für DuckDB-Kompatibilität)
                             for col in dummies.columns:
-                                features_df[col] = dummies[col]
+                                features_df[col] = dummies[col].astype(int)  # Boolean → Integer
                                 feature_list.append(col)
                             
                             print(f"   ✅ {feature}: {len(dummies.columns)} One-Hot Features erstellt")
@@ -1070,9 +1103,9 @@ class EnhancedEarlyWarningSystem:
                 # Zukünftige Daten nach Prediction-Periode (Target)
                 future = customer_data[customer_data[timebase_col] >= prediction_timebase_int]
                 
-                # Churn = wenn I_Alive False ist (Kunde ist nicht mehr aktiv)
+                # Churn = wenn I_Alive 0 ist (Kunde ist nicht mehr aktiv)
                 if len(future) > 0:
-                    will_churn = (future[target_col] == False).any()
+                    will_churn = (future[target_col] == 0).any()
                 else:
                     # Keine zukünftigen Daten: Kunde ist nicht mehr aktiv
                     will_churn = False
@@ -1524,11 +1557,12 @@ class EnhancedEarlyWarningSystem:
                 latest_record = customer_historical.iloc[-1].copy()
                 
                 # Churn-Status in Zukunft (Dynamisches Fenster)
-                will_churn = (~customer_future[target_col]).any()
+                # I_Alive: 1=aktiv, 0=churned → will_churn wenn irgendein Wert 0 ist
+                will_churn = (customer_future[target_col] == 0).any()
                 
                 # Zeit bis Churn (für Analyse) - Korrekte YYYYMM Berechnung
                 if will_churn:
-                    churn_period = customer_future[~customer_future[target_col]][timebase_col].min()
+                    churn_period = customer_future[customer_future[target_col] == 0][timebase_col].min()
                     months_to_churn = months_between(target_start, churn_period) - 1  # -1 weil wir ab target_start zählen
                 else:
                     months_to_churn = None
@@ -1724,8 +1758,8 @@ class EnhancedEarlyWarningSystem:
         test_risk_levels, test_cluster_stats = self._calculate_gmm_risk_segments(y_pred_proba, optimal_threshold, "Test")
         test_df['RISK_LEVEL'] = test_risk_levels
         
-        # GMM-basierte Risiko-Segmentierung auf Trainingsdaten
-        y_train_pred_proba = backtest_model.predict_proba(X_train)[:, 1]
+        # GMM-basierte Risiko-Segmentierung auf Trainingsdaten (robust gegen Ein-Klassen-Fälle)
+        y_train_pred_proba = self._get_positive_class_proba(backtest_model, X_train)
         train_risk_levels, train_cluster_stats = self._calculate_gmm_risk_segments(y_train_pred_proba, optimal_threshold, "Training")
         
         # Cluster-Vergleich
@@ -2720,7 +2754,7 @@ class EnhancedEarlyWarningSystem:
         try:
             
             # Models-Verzeichnis
-            models_dir = ProjectPaths.get_models_directory()
+            models_dir = ProjectPaths.models_directory()
             models_dir.mkdir(exist_ok=True)
             
             # Timestamp für eindeutige Dateinamen
@@ -2806,7 +2840,7 @@ class EnhancedEarlyWarningSystem:
             import json
             
             # Models-Verzeichnis
-            models_dir = ProjectPaths.get_models_directory()
+            models_dir = ProjectPaths.models_directory()
             models_dir.mkdir(exist_ok=True)
             
             # Timestamp für eindeutige Dateinamen
@@ -2814,7 +2848,13 @@ class EnhancedEarlyWarningSystem:
             
             # Backtest-Ergebnisse anreichern (Zähler und Segmente)
             try:
-                total_samples = int(len(test_period_df)) if test_period_df is not None else 0
+                # Fallback: Wenn kein test_period_df übergeben wurde, nutze Anzahl der validation_customers
+                if test_period_df is not None:
+                    total_samples = int(len(test_period_df))
+                elif validation_customers is not None:
+                    total_samples = int(len(validation_customers))
+                else:
+                    total_samples = 0
             except Exception:
                 total_samples = 0
 
@@ -2857,7 +2897,12 @@ class EnhancedEarlyWarningSystem:
                 json.dump(backtest_data, f, indent=2, ensure_ascii=False)
             
             print(f"📊 Backtest-Ergebnisse gespeichert: {backtest_path}")
-            print(f"   - Test-Zeitraum-Kunden: {len(test_period_df) if test_period_df is not None else 0}")
+            # Zeige konsistente Kundenzahl: test_period_df, sonst validation_customers
+            try:
+                _tp_count = len(test_period_df) if test_period_df is not None else (len(validation_customers) if validation_customers is not None else 0)
+            except Exception:
+                _tp_count = 0
+            print(f"   - Test-Zeitraum-Kunden: {_tp_count}")
             print(f"   - Validation Customers: {len(validation_customers) if validation_customers is not None else 0}")
             print(f"   - Optimal Threshold: {backtest_results.get('optimal_threshold', 0.5)}")
             print(f"   - Backtest AUC: {backtest_results.get('auc', 'N/A')}")
@@ -3066,9 +3111,12 @@ class EnhancedEarlyWarningSystem:
                 for feature_name in self.feature_names:
                     if feature_name in row.index:
                         feature_value = row[feature_name]
-                        # Konvertiere zu Python-Standard-Typen
+                        # Konvertiere zu Python-Standard-Typen (explizit keine Booleans)
                         if pd.isna(feature_value):
                             record[feature_name] = None
+                        elif isinstance(feature_value, bool):
+                            # Boolean → Integer Konvertierung (verhindert DuckDB Type-Mismatch)
+                            record[feature_name] = int(feature_value)
                         elif isinstance(feature_value, (int, float)):
                             record[feature_name] = float(feature_value)
                         else:
