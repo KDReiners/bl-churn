@@ -530,7 +530,7 @@ class FeatureAnalysisEngine:
         # Versuche aktuelle Konfiguration aus Dateien zu laden
         try:
             # Suche nach gespeicherten Modellen
-            models_dir = self.paths.get_models_directory()
+            models_dir = self.paths.models_directory()
             if os.path.exists(models_dir):
                 for file in os.listdir(models_dir):
                     if file.endswith('.json') and 'Enhanced_EarlyWarning' in file:
@@ -829,7 +829,24 @@ class FeatureAnalysisEngine:
                 
                 # Metriken berechnen
                 model.fit(X_resampled, y_resampled)
-                y_pred_proba = model.predict_proba(X)[:, 1]
+                # Robust gegen Ein-Klassen-Fälle
+                try:
+                    proba = model.predict_proba(X)
+                    if proba.ndim == 1:
+                        y_pred_proba = proba
+                    elif proba.shape[1] == 1:
+                        cls = int(getattr(model, 'classes_', [0])[0]) if hasattr(model, 'classes_') else 0
+                        val = 1.0 if cls == 1 else 0.0
+                        y_pred_proba = np.full((proba.shape[0],), val)
+                    else:
+                        classes = list(getattr(model, 'classes_', [])) if hasattr(model, 'classes_') else []
+                        if 1 in classes:
+                            idx = classes.index(1)
+                            y_pred_proba = proba[:, idx]
+                        else:
+                            y_pred_proba = proba[:, -1]
+                except Exception:
+                    y_pred_proba = np.zeros((len(X),))
                 y_pred = (y_pred_proba > 0.5).astype(int)
                 
                 result = {

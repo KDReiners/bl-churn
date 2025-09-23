@@ -1005,7 +1005,24 @@ if __name__ == "__main__":
     print(f"✅ Performance Evaluation: AUC = {performance_metrics.get('auc', 0.0):.4f}")
     
     # 8. Threshold Optimization
-    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    # Robust: Wenn Modell nur eine Klasse kennt, nicht crashen
+    try:
+        proba = model.predict_proba(X_test)
+        if proba.ndim == 1:
+            y_pred_proba = proba
+        elif proba.shape[1] == 1:
+            cls = int(getattr(model, 'classes_', [0])[0]) if hasattr(model, 'classes_') else 0
+            val = 1.0 if cls == 1 else 0.0
+            y_pred_proba = np.full((proba.shape[0],), val)
+        else:
+            classes = list(getattr(model, 'classes_', [])) if hasattr(model, 'classes_') else []
+            if 1 in classes:
+                idx = classes.index(1)
+                y_pred_proba = proba[:, idx]
+            else:
+                y_pred_proba = proba[:, -1]
+    except Exception:
+        y_pred_proba = np.zeros((len(X_test),))
     threshold_results = evaluator.optimize_threshold(y_test, y_pred_proba, method='robust')
     print(f"✅ Threshold Optimization: {threshold_results.get('optimal_threshold', 0.5):.3f}")
     

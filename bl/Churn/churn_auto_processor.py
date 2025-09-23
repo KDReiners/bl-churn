@@ -26,17 +26,18 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 # Füge Projekt-Root zum Python-Path hinzu
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent  # Gehe eine Ebene höher zur echten Root
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "json-database" / "bl"))
 
-from bl.json_database.churn_json_database import ChurnJSONDatabase
-# from bl.Churn.churn_working_main import ChurnWorkingPipeline  # AUSKOMMENTIERT
-from bl.Churn.enhanced_early_warning import EnhancedEarlyWarningSystem
-from bl.Churn.churn_persistence_service import ChurnPersistenceService
-from config.paths_config import ProjectPaths
+from json_database.churn_json_database import ChurnJSONDatabase
+# from bl.Churn.churn_working_main import ChurnWorkingPipeline  # AUSKOMMENTIERT  
+from .enhanced_early_warning import EnhancedEarlyWarningSystem
+from .churn_persistence_service import ChurnPersistenceService
+from config.paths_config import ProjectPaths  # Zentrale Root-ProjectPaths
 import json
 import shutil
-from bl.Churn.churn_constants import *
+from .churn_constants import *
 
 class ChurnAutoProcessor:
     """
@@ -183,7 +184,6 @@ class ChurnAutoProcessor:
                 prediction_timebase = experiment.get('prediction_timebase', self.prediction_timebase)
             
             self.logger.info(f"   📅 Training: {training_from} - {training_to}")
-            self.logger.info(f"   📅 Prediction: {prediction_timebase}")
             
             # Status auf 'processing' setzen
             self._update_experiment_status(exp_id, EXPERIMENT_STATUS['PROCESSING'])
@@ -197,6 +197,7 @@ class ChurnAutoProcessor:
                 self.current_experiment_id = exp_id
             backtest_from = experiment.get('backtest_from')
             backtest_to = experiment.get('backtest_to')
+            self.logger.info(f"   📅 Backtest: {backtest_from} - {backtest_to}")
 
             # Validierung der Zeiträume (keine Fallbacks)
             if not training_from or not training_to or not backtest_from or not backtest_to:
@@ -280,7 +281,7 @@ class ChurnAutoProcessor:
                     if backtests:
                         latest_backtest = backtests[0]
                         self.logger.info(f"   📝 Customer-Details zur JSON-DB aus: {latest_backtest.name}")
-                        ok = self.db.add_customer_details_from_backtest(str(latest_backtest), experiment_id=exp_id)
+                        ok = self.db.add_customer_churn_details_from_backtest(str(latest_backtest), experiment_id=exp_id)
                         if ok:
                             self.logger.info("   ✅ Customer-Details in Memory aktualisiert (persistiere am Ende des Experiments)")
                             self._progress(exp_id, 'persist', 1, 3, 'customer_details')
@@ -766,6 +767,7 @@ def main():
     parser.add_argument('--status', action='store_true', help='Zeige nur Status-Übersicht an')
     parser.add_argument('--max-experiments', type=int, default=None, help='Maximale Anzahl zu verarbeitender Experimente')
     parser.add_argument('--reset-failed', action='store_true', help='Setze fehlgeschlagene Experimente zurück')
+    parser.add_argument('--experiment-id', type=int, default=None, help='Verarbeite nur spezifisches Experiment')
     
     args = parser.parse_args()
     
