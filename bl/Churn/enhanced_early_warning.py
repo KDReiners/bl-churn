@@ -60,7 +60,7 @@ class EnhancedEarlyWarningSystem:
     MIGRATION: Migriert zur DataSchema-Architektur für konsistente Dateninterpretation
     """
     
-    def __init__(self, experiment_id=None):
+    def __init__(self, experiment_id=None, test_reduction: float = 0.0):
         self.paths = ProjectPaths()
         
         # MIGRATION: DataSchema Architecture Integration
@@ -73,6 +73,11 @@ class EnhancedEarlyWarningSystem:
         self.data_dictionary = None
         self.feature_names = []  # Initialisiere feature_names
         self.experiment_id = experiment_id  # MINIMALE ÄNDERUNG: experiment_id hinzufügen
+        # Test-Reduktion: 0.0 = keine Reduktion; 0.9 = 10% der Kunden verarbeiten
+        try:
+            self.test_reduction = float(test_reduction) if test_reduction is not None else 0.0
+        except Exception:
+            self.test_reduction = 0.0
         
         print("🔒 Enhanced Early Warning System initialisiert mit DataSchema-Validierung")
         
@@ -1531,8 +1536,22 @@ class EnhancedEarlyWarningSystem:
         
         print(f"🎯 Verarbeite ALLE Kunden die im Test-Zeitraum aktiv waren: {len(test_period_customers)} Kunden")
         
-        # Verwende alle Test-Zeitraum-Kunden für Vorhersagen
+        # Verwende alle Test-Zeitraum-Kunden für Vorhersagen oder reduziere für Testmodus
         test_customers = test_period_customers
+        try:
+            reduction = float(getattr(self, 'test_reduction', 0.0) or 0.0)
+        except Exception:
+            reduction = 0.0
+        if reduction > 0.0:
+            sample_fraction = max(0.0, min(1.0, 1.0 - reduction))
+            if sample_fraction <= 0.0:
+                sample_fraction = 0.1  # Fallback auf 10%
+            import numpy as _np
+            rs = _np.random.RandomState(42)
+            sample_size = max(1, int(len(test_period_customers) * sample_fraction))
+            if sample_size < len(test_period_customers):
+                sampled_idx = rs.choice(len(test_period_customers), size=sample_size, replace=False)
+                test_customers = test_period_customers[sampled_idx]
         
         # Erstelle Test-Dataset mit Customer-Level Aggregation
         test_records = []
@@ -1912,7 +1931,7 @@ class EnhancedEarlyWarningSystem:
                 ].copy()
                 
                 # Churn-Status in Zukunft (Dynamisches Fenster)
-                will_churn = (~customer_future[target_col]).any() if len(customer_future) > 0 else False
+                will_churn = (customer_future[target_col] == 0).any() if len(customer_future) > 0 else False
                 
                 latest_record['ACTUAL_CHURN'] = int(will_churn)
                 test_period_data.append(latest_record)
@@ -1937,7 +1956,7 @@ class EnhancedEarlyWarningSystem:
                 ].copy()
                 
                 # Churn-Status in Zukunft
-                will_churn = (~customer_future[target_col]).any() if len(customer_future) > 0 else False
+                will_churn = (customer_future[target_col] == 0).any() if len(customer_future) > 0 else False
                 dummy_record['ACTUAL_CHURN'] = int(will_churn)
                 
                 # Konvertiere dict zu pandas Series für konsistente Datenstruktur
@@ -2032,7 +2051,7 @@ class EnhancedEarlyWarningSystem:
         # Finde alle Kunden, die nach dem Backtest-Zeitraum noch aktiv waren
         active_customers_data = self.features_df[
             (self.features_df['I_TIMEBASE'] == active_timebase) & 
-            (self.features_df[self.get_target_column_name()] == True)
+            (self.features_df[self.get_target_column_name()] == 1)
         ].copy()
         
         # Gruppiere nach Primary Key und nehme den letzten verfügbaren Record

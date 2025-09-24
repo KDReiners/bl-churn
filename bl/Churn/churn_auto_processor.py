@@ -149,7 +149,8 @@ class ChurnAutoProcessor:
         return processed_ids
     
     def process_experiment(self, experiment: Dict[str, Any], 
-                          custom_periods: Optional[Dict[str, str]] = None) -> bool:
+                          custom_periods: Optional[Dict[str, str]] = None,
+                          test_reduction: float = 0.0) -> bool:
         """
         Verarbeitet ein einzelnes Experiment mit der Churn-Pipeline
         
@@ -210,7 +211,7 @@ class ChurnAutoProcessor:
             except Exception as e:
                 self.logger.warning(f"   ⚠️ rawdata Laden fehlgeschlagen: {e}")
 
-            ees = EnhancedEarlyWarningSystem()
+            ees = EnhancedEarlyWarningSystem(experiment_id=exp_id if isinstance(exp_id, int) else None, test_reduction=test_reduction)
             # Experiment-spezifische Algorithmus-Konfiguration (falls vorhanden) an EES übergeben
             try:
                 algo_cfg = (experiment.get('hyperparameters') or {}).get('algorithm_config')
